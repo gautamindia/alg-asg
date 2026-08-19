@@ -4,14 +4,11 @@ on:
   push:
     branches:
       - main
-
   workflow_dispatch:
-  
 
 jobs:
   build:
     runs-on: ubuntu-latest
-
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -23,27 +20,33 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ap-south-1
 
-      - name: Check AWS CLI
-        run: aws --version
-        
       - name: Setup Terraform
-        uses: hashicorp/setup-terraform@v4  
+        uses: hashicorp/setup-terraform@v4
 
-      - name: Run terraform init
+      - name: Terraform init
         run: terraform init
-      - name: Run terraform plan
-        run: terraform plan
-      - name: Run terraform validate
+
+      - name: Terraform validate
         run: terraform validate
-      
+
+      - name: Terraform plan
+        run: terraform plan -out=tfplan
+
+      # Bundle the plan AND the .terraform folder (providers + backend config)
+      - name: Upload plan + init artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: tf-bundle
+          path: |
+            tfplan
+            .terraform
+          retention-days: 1
 
   terraform-apply:
     name: "Terraform Apply Check"
     runs-on: ubuntu-latest
     needs: build
-    # 3. This environment trigger enforces the manual 'Approve/Deny' button gate
-    environment: production 
-
+    environment: production
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -55,26 +58,26 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ap-south-1
 
-      - name: Check AWS CLI
-        run: aws --version
-        
       - name: Setup Terraform
-        uses: hashicorp/setup-terraform@v4  
+        uses: hashicorp/setup-terraform@v4
 
-      - name: Run terraform init
-        run: terraform init
-      - name: Run terraform apply
-        run: terraform apply -auto-approve
+      # No "terraform init" here — restore what init already produced
+      - name: Download plan + init artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: tf-bundle
+          path: .
+
+      - name: Terraform apply (using saved plan)
+        run: terraform apply -auto-approve tfplan
+
   terraform-destroy:
     name: "Terraform Destroy Check"
     runs-on: ubuntu-latest
     needs:
       - build
       - terraform-apply
-
-    # 3. This environment trigger enforces the manual 'Approve/Deny' button gate
-    environment: production 
-
+    environment: production
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -86,14 +89,15 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ap-south-1
 
-      - name: Check AWS CLI
-        run: aws --version
-        
       - name: Setup Terraform
-        uses: hashicorp/setup-terraform@v4  
+        uses: hashicorp/setup-terraform@v4
 
-      - name: Run terraform init
-        run: terraform init
-      - name: Run terraform destroy
+      # Reuse the same .terraform folder — still no re-init
+      - name: Download init artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: tf-bundle
+          path: .
+
+      - name: Terraform destroy
         run: terraform destroy -auto-approve
-        
